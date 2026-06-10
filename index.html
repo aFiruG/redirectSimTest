@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Redirect</title>
+</head>
+<body>
+  <script>
+    (function () {
+      // HOTFIX:
+      // Some environments (e.g. GitHub Pages / certain redirects) may drop the query string,
+      // so we also read parameters from the URL fragment (hash). If we still can't determine
+      // a valid nordicapigateway host, we default to a known safe host.
+      const DEFAULT_HOST = "auth.nordicapigateway.com";
+      const ALLOWED_SUFFIX = ".nordicapigateway.com";
+
+      function getParamsFromLocation() {
+        // Support both:
+        // 1) https://.../redirectSim/?a=1&b=2
+        // 2) https://.../redirectSim/#?a=1&b=2
+        // 3) https://.../redirectSim/#/someRoute?a=1&b=2
+        const search = window.location.search || "";
+
+        const hash = window.location.hash || "";
+        const idx = hash.indexOf("?");
+        const hashQuery = idx >= 0 ? hash.slice(idx) : "";
+
+        const raw = (search && search.length > 1) ? search : hashQuery;
+        return new URLSearchParams(raw);
+      }
+
+      function extractHostFromUrlString(urlString) {
+        if (!urlString) return null;
+        try {
+          const u = new URL(urlString);
+          const host = (u.hostname || "").toLowerCase();
+          if (host && host.endsWith(ALLOWED_SUFFIX)) return u.hostname; // keep original casing
+          return null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      const params = getParamsFromLocation();
+
+      // Prefer sstsimulator_redirect, fall back to redirect_uri
+      const primaryRedirectRaw = params.get("sstsimulator_redirect");
+      const fallbackRedirectRaw = params.get("redirect_uri");
+      const state = params.get("state") || "";
+
+      let hostToUse = null;
+
+      // 1) Primary: sstsimulator_redirect
+      hostToUse = extractHostFromUrlString(primaryRedirectRaw);
+
+      // 2) Fallback: redirect_uri
+      if (!hostToUse) hostToUse = extractHostFromUrlString(fallbackRedirectRaw);
+
+      // 3) Default
+      if (!hostToUse) {
+        console.warn("HOTFIX: No valid redirect host found; defaulting to DEFAULT_HOST.", {
+          href: window.location.href,
+          sstsimulator_redirect: primaryRedirectRaw,
+          redirect_uri: fallbackRedirectRaw,
+          defaultHost: DEFAULT_HOST
+        });
+        hostToUse = DEFAULT_HOST;
+      }
+
+      const target = new URL(`https://${hostToUse}/stage-routing/callback`);
+      target.searchParams.set("code", "123");
+      if (state) target.searchParams.set("state", state);
+
+      window.location.replace(target.toString());
+    })();
+  </script>
+</body>
+</html>
