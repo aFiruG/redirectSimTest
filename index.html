@@ -1,125 +1,142 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Redirect</title>
-</head>
-<body>
-  <script>
-    (async function () {
-      const DEFAULT_HOST = "auth.nordicapigateway.com";
-      const ALLOWED_SUFFIX = ".nordicapigateway.com";
-      
-      let PROVIDERS_WITHOUT_STATE = {};
-      try {
-        const response = await fetch("providersWithoutState.json");
-        if (response.ok) {
-          PROVIDERS_WITHOUT_STATE = await response.json();
-        }
-      } catch (e) {
-        console.warn("[redirectSim] Failed to load providersWithoutState.json, using empty list.", e);
-      }
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirect</title>
+  </head>
+  <body>
+    <script>
+      (async function () {
+        const DEFAULT_HOST = "auth.nordicapigateway.com";
+        const ALLOWED_SUFFIX = ".nordicapigateway.com";
 
-      function getParamsFromLocation() {
-        const search = window.location.search || "";
-        const hash = window.location.hash || "";
-        const idx = hash.indexOf("?");
-        const hashQuery = idx >= 0 ? hash.slice(idx) : "";
-        const raw = (search && search.length > 1) ? search : hashQuery;
-        return new URLSearchParams(raw);
-      }
-
-      function extractHostFromUrlString(urlString) {
-        if (!urlString) return null;
+        let PROVIDERS_WITHOUT_STATE = {};
         try {
-          const u = new URL(urlString);
-          const host = (u.hostname || "").toLowerCase();
-          if (host && host.endsWith(ALLOWED_SUFFIX)) return u.hostname;
-          return null;
-        } catch (_) {
-          return null;
-        }
-      }
-
-      function decodeSstContext(params) {
-        const encoded = params.get("sstsimulator_state_context");
-        if (!encoded) return null;
-        try {
-          const json = atob(decodeURIComponent(encoded));
-          return JSON.parse(json);
+          const response = await fetch("providersWithoutState.json");
+          if (response.ok) {
+            PROVIDERS_WITHOUT_STATE = await response.json();
+          }
         } catch (e) {
-          console.warn("[redirectSim] Failed to decode sst_context", e);
-          return null;
-        }
-      }
-
-      function matchesCounter(config, scaCounter) {
-        if (!Array.isArray(config)) return false;
-        if (config.length === 0) return true;
-        return config.includes(scaCounter);
-      }
-
-      function shouldReturnState(ctx) {
-        if (ctx.return_state === false) return false;
-
-        const adapter = ctx.adapter || "";
-        const provider = ctx.provider || "";
-        const scaCounter = ctx.sca_counter || 0;
-
-        if (!adapter || !PROVIDERS_WITHOUT_STATE[adapter]) return true;
-
-        const adapterConfig = PROVIDERS_WITHOUT_STATE[adapter];
-
-        if (Array.isArray(adapterConfig)) {
-          return !matchesCounter(adapterConfig, scaCounter);
+          console.warn("[redirectSim] Failed to load providersWithoutState.json, using empty list.", e);
         }
 
-        if (!provider || adapterConfig[provider] === undefined) return true;
-
-        const providerConfig = adapterConfig[provider];
-        if (Array.isArray(providerConfig)) {
-          return !matchesCounter(providerConfig, scaCounter);
+        function getParamsFromLocation() {
+          const search = window.location.search || "";
+          const hash = window.location.hash || "";
+          const idx = hash.indexOf("?");
+          const hashQuery = idx >= 0 ? hash.slice(idx) : "";
+          const raw = (search && search.length > 1) ? search : hashQuery;
+          return new URLSearchParams(raw);
         }
 
-        return true;
-      }
+        function extractHostFromUrlString(urlString) {
+          if (!urlString) return null;
+          try {
+            const u = new URL(urlString);
+            const host = (u.hostname || "").toLowerCase();
+            if (host && host.endsWith(ALLOWED_SUFFIX)) return u.hostname;
+            return null;
+          } catch (_) {
+            return null;
+          }
+        }
 
-      const params = getParamsFromLocation();
-      const ctx = decodeSstContext(params);
+        function decodeRedirectContext(params) {
+          const encoded = params.get("sstsimulator_redirect_context");
+          if (!encoded) return null;
+          try {
+            const json = atob(encoded);
+            return JSON.parse(json);
+          } catch (e) {
+            console.warn("[redirectSim] Failed to decode redirect_context", e);
+            return null;
+          }
+        }
 
-      const primaryRedirectRaw = params.get("sstsimulator_redirect");
-      const fallbackRedirectRaw = params.get("redirect_uri");
-      const sstState = (ctx && ctx.state) || params.get("state") || "";
+        function matchesCounter(config, scaCounter) {
+          if (!Array.isArray(config)) return false;
+          if (config.length === 0) return true;
+          return config.includes(scaCounter);
+        }
 
-      let hostToUse = null;
-      hostToUse = extractHostFromUrlString(primaryRedirectRaw);
-      if (!hostToUse) hostToUse = extractHostFromUrlString(fallbackRedirectRaw);
-      if (!hostToUse) {
-        console.warn("No valid redirect host found; defaulting to DEFAULT_HOST.", {
-          href: window.location.href,
-          sstsimulator_redirect: primaryRedirectRaw,
-          redirect_uri: fallbackRedirectRaw,
-          defaultHost: DEFAULT_HOST
+        function shouldReturnState(ctx) {
+          if (ctx.return_state === false) return false;
+
+          const adapter = ctx.adapter || "";
+          const provider = ctx.provider || "";
+          const scaCounter = ctx.sca_counter || 0;
+
+          if (!adapter || !PROVIDERS_WITHOUT_STATE[adapter]) return true;
+
+          const adapterConfig = PROVIDERS_WITHOUT_STATE[adapter];
+
+          if (Array.isArray(adapterConfig)) {
+            return !matchesCounter(adapterConfig, scaCounter);
+          }
+
+          if (!provider || adapterConfig[provider] === undefined) return true;
+
+          const providerConfig = adapterConfig[provider];
+          if (Array.isArray(providerConfig)) {
+            return !matchesCounter(providerConfig, scaCounter);
+          }
+
+          return true;
+        }
+
+        const params = getParamsFromLocation();
+        const ctx = decodeRedirectContext(params);
+
+        const redirectFromContext = ctx && ctx.redirect ? ctx.redirect : null;
+        const fallbackRedirectRaw = params.get("redirect_uri");
+        const sstState = (ctx && ctx.state) || params.get("state") || "";
+
+        let hostToUse = null;
+        hostToUse = extractHostFromUrlString(redirectFromContext);
+        if (!hostToUse) hostToUse = extractHostFromUrlString(fallbackRedirectRaw);
+        if (!hostToUse) {
+          console.warn("[redirectSim] No valid redirect host found; defaulting to DEFAULT_HOST.", {
+            href: window.location.href,
+            redirectFromContext: redirectFromContext,
+            redirect_uri: fallbackRedirectRaw,
+            defaultHost: DEFAULT_HOST
+          });
+          hostToUse = DEFAULT_HOST;
+        }
+
+        const target = new URL(`https://${hostToUse}/stage-routing/callback`);
+        target.searchParams.set("code", "123");
+
+        const includeState = ctx ? shouldReturnState(ctx) : !!sstState;
+        if (sstState && includeState) {
+          target.searchParams.set("state", sstState);
+        }
+
+        console.log("[redirectSim] Decision:", {
+          redirect_context: ctx,
+          stateIncluded: !!(sstState && includeState),
+          redirectTo: target.toString()
         });
-        hostToUse = DEFAULT_HOST;
-      }
 
-      const target = new URL(`https://${hostToUse}/stage-routing/callback`);
-      target.searchParams.set("code", "123");
+        window.location.replace(target.toString());
+      })();
+    </script>
+  </body>
+  </html>
 
-      const includeState = ctx ? shouldReturnState(ctx) : !!sstState;
-      if (sstState && includeState) {
-        target.searchParams.set("state", sstState);
-      }
+  Changes:
+  - sstsimulator_state_context → sstsimulator_redirect_context
+  - decodeSstContext → decodeRedirectContext, removed decodeURIComponent (no longer percent-encoded)
+        }
 
-      console.log("[redirectSim] Decision:", {
-        sst_context: ctx,
-        stateIncluded: !!(sstState && includeState),
-        redirectTo: target.toString()
-      });
+        console.log("[redirectSim] Decision:", {
+          redirect_context: ctx,
+          stateIncluded: !!(sstState && includeState),
+          redirectTo: target.toString()
+        });
 
-      window.location.replace(target.toString());
-    })();
-  </script>
-</body>
-</html>
+        window.location.replace(target.toString());
+      })();
+    </script>
+  </body>
+  </html>
