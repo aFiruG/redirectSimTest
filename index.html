@@ -6,25 +6,25 @@
 </head>
 <body>
   <script>
-    (function () {
-      // HOTFIX:
-      // Some environments (e.g. GitHub Pages / certain redirects) may drop the query string,
-      // so we also read parameters from the URL fragment (hash). If we still can't determine
-      // a valid nordicapigateway host, we default to a known safe host.
+    (async function () {
       const DEFAULT_HOST = "auth.nordicapigateway.com";
       const ALLOWED_SUFFIX = ".nordicapigateway.com";
+      
+      let PROVIDERS_WITHOUT_STATE = {};
+      try {
+        const response = await fetch("providersWithoutState.json");
+        if (response.ok) {
+          PROVIDERS_WITHOUT_STATE = await response.json();
+        }
+      } catch (e) {
+        console.warn("[redirectSim] Failed to load providersWithoutState.json, using empty list.", e);
+      }
 
       function getParamsFromLocation() {
-        // Support both:
-        // 1) https://.../redirectSim/?a=1&b=2
-        // 2) https://.../redirectSim/#?a=1&b=2
-        // 3) https://.../redirectSim/#/someRoute?a=1&b=2
         const search = window.location.search || "";
-
         const hash = window.location.hash || "";
         const idx = hash.indexOf("?");
         const hashQuery = idx >= 0 ? hash.slice(idx) : "";
-
         const raw = (search && search.length > 1) ? search : hashQuery;
         return new URLSearchParams(raw);
       }
@@ -34,31 +34,68 @@
         try {
           const u = new URL(urlString);
           const host = (u.hostname || "").toLowerCase();
-          if (host && host.endsWith(ALLOWED_SUFFIX)) return u.hostname; // keep original casing
+          if (host && host.endsWith(ALLOWED_SUFFIX)) return u.hostname;
           return null;
         } catch (_) {
           return null;
         }
       }
 
-      const params = getParamsFromLocation();
+      function decodeSstContext(params) {
+        const encoded = params.get("sstsimulator_state_context");
+        if (!encoded) return null;
+        try {
+          const json = atob(decodeURIComponent(encoded));
+          return JSON.parse(json);
+        } catch (e) {
+          console.warn("[redirectSim] Failed to decode sst_context", e);
+          return null;
+        }
+      }
 
-      // Prefer sstsimulator_redirect, fall back to redirect_uri
+      function matchesCounter(config, scaCounter) {
+        if (!Array.isArray(config)) return false;
+        if (config.length === 0) return true;
+        return config.includes(scaCounter);
+      }
+
+      function shouldReturnState(ctx) {
+        if (ctx.return_state === false) return false;
+
+        const adapter = ctx.adapter || "";
+        const provider = ctx.provider || "";
+        const scaCounter = ctx.sca_counter || 0;
+
+        if (!adapter || !PROVIDERS_WITHOUT_STATE[adapter]) return true;
+
+        const adapterConfig = PROVIDERS_WITHOUT_STATE[adapter];
+
+        if (Array.isArray(adapterConfig)) {
+          return !matchesCounter(adapterConfig, scaCounter);
+        }
+
+        if (!provider || adapterConfig[provider] === undefined) return true;
+
+        const providerConfig = adapterConfig[provider];
+        if (Array.isArray(providerConfig)) {
+          return !matchesCounter(providerConfig, scaCounter);
+        }
+
+        return true;
+      }
+
+      const params = getParamsFromLocation();
+      const ctx = decodeSstContext(params);
+
       const primaryRedirectRaw = params.get("sstsimulator_redirect");
       const fallbackRedirectRaw = params.get("redirect_uri");
-      const state = params.get("state") || "";
+      const sstState = (ctx && ctx.state) || params.get("state") || "";
 
       let hostToUse = null;
-
-      // 1) Primary: sstsimulator_redirect
       hostToUse = extractHostFromUrlString(primaryRedirectRaw);
-
-      // 2) Fallback: redirect_uri
       if (!hostToUse) hostToUse = extractHostFromUrlString(fallbackRedirectRaw);
-
-      // 3) Default
       if (!hostToUse) {
-        console.warn("HOTFIX: No valid redirect host found; defaulting to DEFAULT_HOST.", {
+        console.warn("No valid redirect host found; defaulting to DEFAULT_HOST.", {
           href: window.location.href,
           sstsimulator_redirect: primaryRedirectRaw,
           redirect_uri: fallbackRedirectRaw,
@@ -69,7 +106,17 @@
 
       const target = new URL(`https://${hostToUse}/stage-routing/callback`);
       target.searchParams.set("code", "123");
-      if (state) target.searchParams.set("state", state);
+
+      const includeState = ctx ? shouldReturnState(ctx) : !!sstState;
+      if (sstState && includeState) {
+        target.searchParams.set("state", sstState);
+      }
+
+      console.log("[redirectSim] Decision:", {
+        sst_context: ctx,
+        stateIncluded: !!(sstState && includeState),
+        redirectTo: target.toString()
+      });
 
       window.location.replace(target.toString());
     })();
